@@ -221,7 +221,13 @@ else:
                     max_tokens=300,
                     messages=[{
                         "role": "user",
-                        "content": f"In 3-4 simple sentences, what is {medicine_name}? What is it used for? Any important warnings? Keep it simple for a patient."
+                        "content": f"Please provide the following about {medicine_name} in simple language for a patient:
+1. What is it?
+2. What is it used for?
+3. Common side effects
+4. Important warnings
+5. Typical dosage
+Keep it simple and clear."
                     }]
                 )
             st.subheader("🤖 About this medicine:")
