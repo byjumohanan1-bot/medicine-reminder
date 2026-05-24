@@ -183,8 +183,7 @@ else:
             st.session_state.user_name = ""
             st.rerun()
 
-    # --- Main tabs ---
-    main_tab1, main_tab2 = st.tabs(["💊 Medicine Reminder", "⚠️ Drug Interaction Checker"])
+    main_tab1, main_tab2, main_tab3 = st.tabs(["💊 Medicine Reminder", "⚠️ Drug Interaction Checker", "🩺 Symptom Checker"])
 
     with main_tab1:
         col1, col2 = st.columns(2)
@@ -265,3 +264,36 @@ else:
                     st.error(f"⚠️ Warning! {result}")
                 else:
                     st.success(f"✅ {result}")
+
+    with main_tab3:
+        st.subheader("🩺 Symptom Checker")
+        st.write("Tell me your symptoms and I'll suggest possible medicines!")
+
+        symptoms = st.text_area("Describe your symptoms", placeholder="e.g. I have a headache, fever and body pain since yesterday...")
+        age = st.number_input("Your age", min_value=1, max_value=100, value=25)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+        with col2:
+            severity = st.selectbox("Severity", ["Mild", "Moderate", "Severe"])
+
+        if st.button("🔍 Check Symptoms", use_container_width=True):
+            if not api_key:
+                st.error("Please enter your API key in the sidebar!")
+            elif not symptoms:
+                st.error("Please describe your symptoms!")
+            else:
+                with st.spinner("🤖 Analyzing symptoms..."):
+                    client = OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        max_tokens=500,
+                        messages=[{
+                            "role": "user",
+                            "content": f"A {age} year old {gender} patient has the following {severity} symptoms: {symptoms}. Please provide in simple language: 1. What condition might this be? 2. Suggested over-the-counter medicines 3. Dosage for each medicine 4. When to see a doctor immediately. Always remind them to consult a doctor for proper diagnosis."
+                        }]
+                    )
+                st.subheader("🤖 AI Health Suggestion:")
+                st.warning("⚠️ This is AI-generated information only. Always consult a real doctor for proper diagnosis and treatment!")
+                st.info(response.choices[0].message.content)
