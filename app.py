@@ -6,9 +6,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import hashlib
-import streamlit_authenticator as stauth
 
-# --- Database Setup ---
 def init_db():
     conn = sqlite3.connect("reminders.db")
     c = conn.cursor()
@@ -118,10 +116,8 @@ MediRemind Team
     except:
         return False
 
-# --- Initialize ---
 init_db()
 
-# --- Page Setup ---
 st.set_page_config(page_title="MediRemind", page_icon="💊", layout="centered")
 
 st.markdown("""
@@ -136,7 +132,6 @@ st.markdown('<div class="title">💊 MediRemind</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Your personal AI-powered medicine assistant</div>', unsafe_allow_html=True)
 st.divider()
 
-# --- Session State ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "user_email" not in st.session_state:
@@ -144,7 +139,6 @@ if "user_email" not in st.session_state:
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
 
-# --- Login/Register ---
 if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["Login", "Register"])
 
@@ -174,15 +168,11 @@ if not st.session_state.logged_in:
                 st.error("Email already exists!")
 
 else:
-    # --- Logged in view ---
     with st.sidebar:
         st.header("⚙️ Settings")
         st.write(f"👋 Hello, **{st.session_state.user_name}**!")
         api_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
         st.caption("Your key is never stored or shared.")
-        st.divider()
-        st.markdown("### 📋 How to use")
-        st.markdown("1. Enter your API key\n2. Type a medicine name\n3. Set reminder time\n4. Click the button!")
         st.divider()
         if st.button("🗑️ Clear My Reminders"):
             delete_all(st.session_state.user_email)
@@ -193,55 +183,85 @@ else:
             st.session_state.user_name = ""
             st.rerun()
 
-    col1, col2 = st.columns(2)
-    with col1:
-        medicine_name = st.text_input("💊 Medicine Name", placeholder="e.g. Paracetamol")
-    with col2:
-        reminder_time = st.time_input("⏰ Reminder Time")
+    # --- Main tabs ---
+    main_tab1, main_tab2 = st.tabs(["💊 Medicine Reminder", "⚠️ Drug Interaction Checker"])
 
-    dosage = st.text_input("📏 Dosage (optional)", placeholder="e.g. 500mg, 1 tablet")
+    with main_tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            medicine_name = st.text_input("💊 Medicine Name", placeholder="e.g. Paracetamol")
+        with col2:
+            reminder_time = st.time_input("⏰ Reminder Time")
 
-    if st.button("✅ Save Reminder & Get AI Info", use_container_width=True):
-        if not api_key:
-            st.error("Please enter your API key in the sidebar!")
-        elif not medicine_name:
-            st.error("Please enter a medicine name!")
-        else:
-            save_reminder(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
-            st.success(f"✅ Reminder saved for {medicine_name} at {reminder_time}!")
-            email_sent = send_email(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
-            if email_sent:
-                st.success("📧 Confirmation email sent!")
+        dosage = st.text_input("📏 Dosage (optional)", placeholder="e.g. 500mg, 1 tablet")
+
+        if st.button("✅ Save Reminder & Get AI Info", use_container_width=True):
+            if not api_key:
+                st.error("Please enter your API key in the sidebar!")
+            elif not medicine_name:
+                st.error("Please enter a medicine name!")
             else:
-                st.warning("⚠️ Email not sent.")
-            with st.spinner("🤖 Getting AI information..."):
-                client = OpenAI(api_key=api_key)
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    max_tokens=300,
-                    messages=[{
-                        "role": "user",
-                        "content": f"Please provide the following about {medicine_name} in simple language for a patient:
-1. What is it?
-2. What is it used for?
-3. Common side effects
-4. Important warnings
-5. Typical dosage
-Keep it simple and clear."
-                    }]
-                )
-            st.subheader("🤖 About this medicine:")
-            st.info(response.choices[0].message.content)
+                save_reminder(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
+                st.success(f"✅ Reminder saved for {medicine_name} at {reminder_time}!")
+                email_sent = send_email(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
+                if email_sent:
+                    st.success("📧 Confirmation email sent!")
+                else:
+                    st.warning("⚠️ Email not sent.")
+                with st.spinner("🤖 Getting AI information..."):
+                    client = OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        max_tokens=500,
+                        messages=[{
+                            "role": "user",
+                            "content": f"Please provide the following about {medicine_name} in simple language for a patient: 1. What is it? 2. What is it used for? 3. Common side effects 4. Important warnings 5. Typical dosage. Keep it simple and clear."
+                        }]
+                    )
+                st.subheader("🤖 About this medicine:")
+                st.info(response.choices[0].message.content)
 
-    reminders = get_reminders(st.session_state.user_email)
-    if reminders:
-        st.divider()
-        st.subheader(f"📋 Your Reminders ({len(reminders)} total)")
-        for r in reminders:
-            st.markdown(f"""
-            <div class="reminder-box">
-                💊 <strong>{r[0]}</strong> — ⏰ {r[1]} — 📏 {r[2]} — 🕐 {r[3]}
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No reminders yet. Add your first medicine above!")
+        reminders = get_reminders(st.session_state.user_email)
+        if reminders:
+            st.divider()
+            st.subheader(f"📋 Your Reminders ({len(reminders)} total)")
+            for r in reminders:
+                st.markdown(f"""
+                <div class="reminder-box">
+                    💊 <strong>{r[0]}</strong> — ⏰ {r[1]} — 📏 {r[2]} — 🕐 {r[3]}
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No reminders yet. Add your first medicine above!")
+
+    with main_tab2:
+        st.subheader("⚠️ Drug Interaction Checker")
+        st.write("Check if two medicines are safe to take together!")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            medicine1 = st.text_input("💊 First Medicine", placeholder="e.g. Aspirin")
+        with col2:
+            medicine2 = st.text_input("💊 Second Medicine", placeholder="e.g. Ibuprofen")
+
+        if st.button("🔍 Check Interaction", use_container_width=True):
+            if not api_key:
+                st.error("Please enter your API key in the sidebar!")
+            elif not medicine1 or not medicine2:
+                st.error("Please enter both medicine names!")
+            else:
+                with st.spinner("🤖 Checking drug interaction..."):
+                    client = OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        max_tokens=400,
+                        messages=[{
+                            "role": "user",
+                            "content": f"Is it safe to take {medicine1} and {medicine2} together? Please answer in simple language for a patient. Include: 1. Is it safe or dangerous? 2. What can happen if taken together? 3. What should the patient do? Be clear and simple."
+                        }]
+                    )
+                result = response.choices[0].message.content
+                if any(word in result.lower() for word in ["dangerous", "avoid", "do not", "risk", "harmful", "warning"]):
+                    st.error(f"⚠️ Warning! {result}")
+                else:
+                    st.success(f"✅ {result}")
