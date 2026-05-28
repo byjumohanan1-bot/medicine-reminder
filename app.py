@@ -213,3 +213,17 @@ else:
                     result = ask_ai(f"{age}yr {gender} with {severity} symptoms: {symptoms}. 1.Possible condition? 2.OTC medicines? 3.Dosage? 4.When to see doctor? Keep simple.")
                 st.warning("⚠️ AI suggestion only. Always consult a real doctor!")
                 st.info(result)
+
+def check_and_send_reminders():
+    now = datetime.now().strftime("%H:%M")
+    conn = sqlite3.connect("reminders.db")
+    c = conn.cursor()
+    c.execute("SELECT user_email, medicine, time, dosage FROM reminders WHERE time=?", (now,))
+    rows = c.fetchall()
+    conn.close()
+    for row in rows:
+        send_email(row[0], row[1], row[2], row[3])
+
+check_and_send_reminders()
+
+
