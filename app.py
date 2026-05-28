@@ -6,6 +6,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import hashlib
+import razorpay
+import json
 
 # Supabase setup
 try:
@@ -13,22 +15,44 @@ try:
 except:
     supabase = create_client("https://dvpebrdomjdclxjttjbf.supabase.co", "sb_secret_tJZEzDaoOvN5mnFwlkB2og_F8DWNY2C")
 
+# Razorpay setup
+try:
+    rzp_client = razorpay.Client(auth=(st.secrets["RAZORPAY_KEY_ID"], st.secrets["RAZORPAY_KEY_SECRET"]))
+    RZP_KEY_ID = st.secrets["RAZORPAY_KEY_ID"]
+except:
+    rzp_client = None
+    RZP_KEY_ID = ""
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def register_user(name, email, password):
     try:
-        supabase.table("users").insert({"name": name, "email": email, "password": hash_password(password)}).execute()
+        supabase.table("users").insert({"name": name, "email": email, "password": hash_password(password), "plan": "free"}).execute()
         return True
     except:
         return False
 
 def login_user(email, password):
     try:
-        result = supabase.table("users").select("name").eq("email", email).eq("password", hash_password(password)).execute()
+        result = supabase.table("users").select("name, plan").eq("email", email).eq("password", hash_password(password)).execute()
         return result.data[0] if result.data else None
     except:
         return None
+
+def get_user_plan(email):
+    try:
+        result = supabase.table("users").select("plan").eq("email", email).execute()
+        return result.data[0]['plan'] if result.data else "free"
+    except:
+        return "free"
+
+def upgrade_user(email):
+    try:
+        supabase.table("users").update({"plan": "pro"}).eq("email", email).execute()
+        return True
+    except:
+        return False
 
 def save_reminder(user_email, medicine, time, dosage):
     supabase.table("reminders").insert({"user_email": user_email, "medicine": medicine, "time": time, "dosage": dosage}).execute()
@@ -86,7 +110,6 @@ check_and_send_reminders()
 
 st.set_page_config(page_title="MediRemind", page_icon="💊", layout="centered")
 
-# Landing page CSS
 st.markdown("""
 <style>
 .hero {
@@ -109,17 +132,6 @@ st.markdown("""
 }
 .feature-icon { font-size: 40px; }
 .feature-title { font-size: 18px; font-weight: 700; color: #1a73e8; }
-.cta-button {
-    background: #1a73e8;
-    color: white;
-    padding: 15px 40px;
-    border-radius: 30px;
-    font-size: 18px;
-    font-weight: 700;
-    text-align: center;
-    display: inline-block;
-    margin: 10px;
-}
 .stats-box {
     background: linear-gradient(135deg, #1a73e8, #0d47a1);
     color: white;
@@ -128,6 +140,22 @@ st.markdown("""
     text-align: center;
 }
 .stats-number { font-size: 36px; font-weight: 900; }
+.pro-box {
+    background: linear-gradient(135deg, #f093fb, #f5576c);
+    color: white;
+    border-radius: 20px;
+    padding: 30px;
+    text-align: center;
+    margin: 20px 0;
+}
+.free-box {
+    background: #f8f9ff;
+    border-radius: 20px;
+    padding: 30px;
+    text-align: center;
+    border: 2px solid #e0e7ff;
+    margin: 20px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,9 +167,10 @@ if "user_name" not in st.session_state:
     st.session_state.user_name = ""
 if "show_app" not in st.session_state:
     st.session_state.show_app = False
+if "user_plan" not in st.session_state:
+    st.session_state.user_plan = "free"
 
 if not st.session_state.logged_in and not st.session_state.show_app:
-    # LANDING PAGE
     st.markdown("""
     <div class="hero">
         <div style="font-size:60px">💊</div>
@@ -151,63 +180,49 @@ if not st.session_state.logged_in and not st.session_state.show_app:
     </div>
     """, unsafe_allow_html=True)
 
-    # Features
     st.markdown("## ✨ Why MediRemind?")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("""
-        <div class="feature-box">
-            <div class="feature-icon">⏰</div>
-            <div class="feature-title">Smart Reminders</div>
-            <p>Get email reminders exactly when it's time to take your medicine</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">⏰</div><div class="feature-title">Smart Reminders</div><p>Get email reminders exactly when it's time</p></div>""", unsafe_allow_html=True)
     with col2:
-        st.markdown("""
-        <div class="feature-box">
-            <div class="feature-icon">🤖</div>
-            <div class="feature-title">AI Medicine Info</div>
-            <p>Get instant AI-powered information about any medicine</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">🤖</div><div class="feature-title">AI Medicine Info</div><p>Instant AI-powered medicine information</p></div>""", unsafe_allow_html=True)
     with col3:
-        st.markdown("""
-        <div class="feature-box">
-            <div class="feature-icon">⚠️</div>
-            <div class="feature-title">Drug Interaction Check</div>
-            <p>Check if two medicines are safe to take together</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">⚠️</div><div class="feature-title">Drug Interaction</div><p>Check if medicines are safe together</p></div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # Stats
-    col1, col2, col3 = st.columns(3)
+    # Pricing section
+    st.markdown("## 💎 Pricing")
+    col1, col2 = st.columns(2)
     with col1:
         st.markdown("""
-        <div class="stats-box">
-            <div class="stats-number">100%</div>
-            <div>Free to use</div>
+        <div class="free-box">
+            <h2>🆓 Free</h2>
+            <h1>₹0</h1>
+            <p>Forever free</p>
+            <p>✅ 3 reminders</p>
+            <p>✅ AI medicine info</p>
+            <p>✅ Drug interaction check</p>
+            <p>❌ Symptom checker</p>
+            <p>❌ Unlimited reminders</p>
         </div>
         """, unsafe_allow_html=True)
     with col2:
         st.markdown("""
-        <div class="stats-box">
-            <div class="stats-number">AI</div>
-            <div>Powered by Groq</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown("""
-        <div class="stats-box">
-            <div class="stats-number">24/7</div>
-            <div>Always available</div>
+        <div class="pro-box">
+            <h2>⭐ Pro</h2>
+            <h1>₹99/month</h1>
+            <p>Best for patients</p>
+            <p>✅ Unlimited reminders</p>
+            <p>✅ AI medicine info</p>
+            <p>✅ Drug interaction check</p>
+            <p>✅ Symptom checker</p>
+            <p>✅ Priority support</p>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("## 🚀 Get Started Free")
-
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🔑 Login", use_container_width=True):
@@ -218,7 +233,6 @@ if not st.session_state.logged_in and not st.session_state.show_app:
             st.session_state.show_app = True
             st.rerun()
 
-    st.markdown("---")
     st.markdown("<p style='text-align:center;color:gray'>Built with ❤️ by a pharmacy student | MediRemind 2026</p>", unsafe_allow_html=True)
 
 elif not st.session_state.logged_in and st.session_state.show_app:
@@ -236,6 +250,7 @@ elif not st.session_state.logged_in and st.session_state.show_app:
                 st.session_state.logged_in = True
                 st.session_state.user_email = email
                 st.session_state.user_name = user['name']
+                st.session_state.user_plan = user.get('plan', 'free')
                 st.rerun()
             else:
                 st.error("Wrong email or password!")
@@ -254,34 +269,84 @@ else:
     with st.sidebar:
         st.markdown("# 💊 MediRemind")
         st.write(f"👋 Hello, **{st.session_state.user_name}**!")
+        if st.session_state.user_plan == "pro":
+            st.success("⭐ Pro Member")
+        else:
+            st.warning("🆓 Free Plan")
+            if st.button("⭐ Upgrade to Pro - ₹99/month"):
+                st.session_state.show_payment = True
         if st.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.show_app = False
             st.rerun()
 
-    st.markdown("<h2 style='text-align:center;color:#1a73e8'>💊 MediRemind</h2>", unsafe_allow_html=True)
-    st.divider()
+    # Payment section
+    if st.session_state.get("show_payment"):
+        st.markdown("## ⭐ Upgrade to Pro")
+        st.markdown("Get unlimited reminders + symptom checker for just **₹99/month**!")
+        order = rzp_client.order.create({"amount": 9900, "currency": "INR", "payment_capture": 1})
+        order_id = order['id']
+        payment_html = f"""
+        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+        <button onclick="openRazorpay()" style="background:#1a73e8;color:white;padding:15px 40px;border:none;border-radius:10px;font-size:18px;cursor:pointer;">
+            💳 Pay ₹99 Now
+        </button>
+        <script>
+        function openRazorpay() {{
+            var options = {{
+                key: "{RZP_KEY_ID}",
+                amount: 9900,
+                currency: "INR",
+                name: "MediRemind",
+                description: "Pro Plan - 1 Month",
+                order_id: "{order_id}",
+                handler: function(response) {{
+                    window.location.href = "?payment=success&email={st.session_state.user_email}";
+                }},
+                prefill: {{email: "{st.session_state.user_email}"}},
+                theme: {{color: "#1a73e8"}}
+            }};
+            var rzp = new Razorpay(options);
+            rzp.open();
+        }}
+        </script>
+        """
+        st.components.v1.html(payment_html, height=100)
+
+        # Check payment success
+        params = st.query_params
+        if params.get("payment") == "success":
+            upgrade_user(st.session_state.user_email)
+            st.session_state.user_plan = "pro"
+            st.session_state.show_payment = False
+            st.success("🎉 Welcome to Pro! Enjoy unlimited features!")
+            st.rerun()
+
+    plan = st.session_state.user_plan
+    reminders = get_reminders(st.session_state.user_email)
 
     t1, t2, t3 = st.tabs(["💊 Medicine Reminder", "⚠️ Drug Interaction", "🩺 Symptom Checker"])
 
     with t1:
         st.subheader("💊 Medicine Reminder")
-        col1, col2 = st.columns(2)
-        with col1:
-            medicine = st.text_input("💊 Medicine Name")
-        with col2:
-            time = st.selectbox("⏰ Reminder Time", [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 30)])
-        dosage = st.text_input("✏️ Dosage (optional)")
-        if st.button("✅ Save Reminder & Get AI Info", use_container_width=True):
-            if medicine:
-                save_reminder(st.session_state.user_email, medicine, time, dosage)
-                send_email(st.session_state.user_email, medicine, time, dosage)
-                st.success(f"✅ Reminder saved for {medicine} at {time}!")
-                with st.spinner("Getting AI info..."):
-                    result = ask_ai(f"Tell me about {medicine} medicine. 1.What is it? 2.Uses? 3.Side effects? 4.Warnings? Simple language.")
-                    st.subheader("🤖 About this medicine:")
-                    st.info(result)
-        reminders = get_reminders(st.session_state.user_email)
+        if plan == "free" and len(reminders) >= 3:
+            st.warning("⚠️ Free plan limit reached! Upgrade to Pro for unlimited reminders.")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                medicine = st.text_input("💊 Medicine Name")
+            with col2:
+                time = st.selectbox("⏰ Reminder Time", [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 30)])
+            dosage = st.text_input("✏️ Dosage (optional)")
+            if st.button("✅ Save Reminder & Get AI Info", use_container_width=True):
+                if medicine:
+                    save_reminder(st.session_state.user_email, medicine, time, dosage)
+                    send_email(st.session_state.user_email, medicine, time, dosage)
+                    st.success(f"✅ Reminder saved for {medicine} at {time}!")
+                    with st.spinner("Getting AI info..."):
+                        result = ask_ai(f"Tell me about {medicine} medicine. 1.What is it? 2.Uses? 3.Side effects? 4.Warnings? Simple language.")
+                        st.subheader("🤖 About this medicine:")
+                        st.info(result)
         if reminders:
             st.subheader(f"📋 Your Reminders ({len(reminders)} total)")
             for r in reminders:
@@ -309,19 +374,23 @@ else:
                         st.success(f"✅ {result}")
 
     with t3:
-        st.subheader("🩺 Symptom Checker")
-        symptoms = st.text_area("Describe symptoms", placeholder="e.g. headache, fever, body pain...")
-        age = st.number_input("Age", min_value=1, max_value=100, value=25)
-        col1, col2 = st.columns(2)
-        with col1:
-            gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-        with col2:
-            severity = st.selectbox("Severity", ["Mild", "Moderate", "Severe"])
-        if st.button("🔍 Check Symptoms", use_container_width=True):
-            if not symptoms:
-                st.error("Describe your symptoms!")
-            else:
-                with st.spinner("Analyzing..."):
-                    result = ask_ai(f"{age}yr {gender} with {severity} symptoms: {symptoms}. 1.Possible condition? 2.OTC medicines? 3.Dosage? 4.When to see doctor? Simple language.")
-                    st.warning("⚠️ AI suggestion only. Always consult a real doctor!")
-                    st.info(result)
+        if plan == "free":
+            st.warning("🔒 Symptom Checker is a Pro feature!")
+            st.markdown("Upgrade to Pro for **₹99/month** to unlock this feature.")
+        else:
+            st.subheader("🩺 Symptom Checker")
+            symptoms = st.text_area("Describe symptoms", placeholder="e.g. headache, fever, body pain...")
+            age = st.number_input("Age", min_value=1, max_value=100, value=25)
+            col1, col2 = st.columns(2)
+            with col1:
+                gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+            with col2:
+                severity = st.selectbox("Severity", ["Mild", "Moderate", "Severe"])
+            if st.button("🔍 Check Symptoms", use_container_width=True):
+                if not symptoms:
+                    st.error("Describe your symptoms!")
+                else:
+                    with st.spinner("Analyzing..."):
+                        result = ask_ai(f"{age}yr {gender} with {severity} symptoms: {symptoms}. 1.Possible condition? 2.OTC medicines? 3.Dosage? 4.When to see doctor? Simple language.")
+                        st.warning("⚠️ AI suggestion only. Always consult a real doctor!")
+                        st.info(result)
