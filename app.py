@@ -1,64 +1,44 @@
 import streamlit as st
 from groq import Groq
-import sqlite3
+from supabase import create_client
 from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import hashlib
 
-def init_db():
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, medicine TEXT, time TEXT, dosage TEXT, created_at TEXT)""")
-    conn.commit()
-    conn.close()
+# Supabase setup
+try:
+    supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+except:
+    supabase = create_client("https://dvpebrdomjdclxjttjbf.supabase.co", "sb_secret_tJZEzDaoOvN5mnFwlkB2og_F8DWNY2C")
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def register_user(name, email, password):
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
     try:
-        c.execute("INSERT INTO users (name, email, password) VALUES (?, ?, ?)", (name, email, hash_password(password)))
-        conn.commit()
-        conn.close()
+        supabase.table("users").insert({"name": name, "email": email, "password": hash_password(password)}).execute()
         return True
     except:
-        conn.close()
         return False
 
 def login_user(email, password):
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("SELECT name FROM users WHERE email=? AND password=?", (email, hash_password(password)))
-    user = c.fetchone()
-    conn.close()
-    return user
+    try:
+        result = supabase.table("users").select("name").eq("email", email).eq("password", hash_password(password)).execute()
+        return result.data[0] if result.data else None
+    except:
+        return None
 
 def save_reminder(user_email, medicine, time, dosage):
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO reminders (user_email, medicine, time, dosage, created_at) VALUES (?, ?, ?, ?, ?)", (user_email, medicine, time, dosage, datetime.now().strftime("%Y-%m-%d %H:%M")))
-    conn.commit()
-    conn.close()
+    supabase.table("reminders").insert({"user_email": user_email, "medicine": medicine, "time": time, "dosage": dosage}).execute()
 
 def get_reminders(user_email):
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("SELECT medicine, time, dosage, created_at FROM reminders WHERE user_email=? ORDER BY id DESC", (user_email,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
+    result = supabase.table("reminders").select("*").eq("user_email", user_email).execute()
+    return result.data
 
 def delete_all(user_email):
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM reminders WHERE user_email=?", (user_email,))
-    conn.commit()
-    conn.close()
+    supabase.table("reminders").delete().eq("user_email", user_email).execute()
 
 def send_email(to_email, medicine, time, dosage):
     try:
@@ -96,12 +76,60 @@ def ask_ai(prompt):
     )
     return response.choices[0].message.content
 
-init_db()
+def check_and_send_reminders():
+    now = datetime.now().strftime("%H:%M")
+    result = supabase.table("reminders").select("*").eq("time", now).execute()
+    for row in result.data:
+        send_email(row['user_email'], row['medicine'], row['time'], row['dosage'])
+
+check_and_send_reminders()
+
 st.set_page_config(page_title="MediRemind", page_icon="💊", layout="centered")
-st.markdown("""<style>.title{font-size:40px;font-weight:800;color:#1a73e8;text-align:center}.subtitle{font-size:16px;color:#555;text-align:center;margin-bottom:30px}.reminder-box{background:#ffffff;padding:15px;border-radius:12px;margin:8px 0;border-left:5px solid #1a73e8}</style>""", unsafe_allow_html=True)
-st.markdown('<div class="title">💊 MediRemind</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Your personal AI-powered medicine assistant</div>', unsafe_allow_html=True)
-st.divider()
+
+# Landing page CSS
+st.markdown("""
+<style>
+.hero {
+    background: linear-gradient(135deg, #1a73e8, #0d47a1);
+    padding: 60px 20px;
+    border-radius: 20px;
+    text-align: center;
+    color: white;
+    margin-bottom: 30px;
+}
+.hero h1 { font-size: 48px; font-weight: 900; margin-bottom: 10px; }
+.hero p { font-size: 20px; opacity: 0.9; }
+.feature-box {
+    background: #f8f9ff;
+    border-radius: 15px;
+    padding: 25px;
+    text-align: center;
+    border: 1px solid #e0e7ff;
+    margin-bottom: 15px;
+}
+.feature-icon { font-size: 40px; }
+.feature-title { font-size: 18px; font-weight: 700; color: #1a73e8; }
+.cta-button {
+    background: #1a73e8;
+    color: white;
+    padding: 15px 40px;
+    border-radius: 30px;
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+    display: inline-block;
+    margin: 10px;
+}
+.stats-box {
+    background: linear-gradient(135deg, #1a73e8, #0d47a1);
+    color: white;
+    border-radius: 15px;
+    padding: 20px;
+    text-align: center;
+}
+.stats-number { font-size: 36px; font-weight: 900; }
+</style>
+""", unsafe_allow_html=True)
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -109,8 +137,94 @@ if "user_email" not in st.session_state:
     st.session_state.user_email = ""
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
+if "show_app" not in st.session_state:
+    st.session_state.show_app = False
 
-if not st.session_state.logged_in:
+if not st.session_state.logged_in and not st.session_state.show_app:
+    # LANDING PAGE
+    st.markdown("""
+    <div class="hero">
+        <div style="font-size:60px">💊</div>
+        <h1>MediRemind</h1>
+        <p>Your AI-powered personal medicine assistant</p>
+        <p style="font-size:14px;opacity:0.7">Never miss a dose again</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Features
+    st.markdown("## ✨ Why MediRemind?")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        <div class="feature-box">
+            <div class="feature-icon">⏰</div>
+            <div class="feature-title">Smart Reminders</div>
+            <p>Get email reminders exactly when it's time to take your medicine</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <div class="feature-box">
+            <div class="feature-icon">🤖</div>
+            <div class="feature-title">AI Medicine Info</div>
+            <p>Get instant AI-powered information about any medicine</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown("""
+        <div class="feature-box">
+            <div class="feature-icon">⚠️</div>
+            <div class="feature-title">Drug Interaction Check</div>
+            <p>Check if two medicines are safe to take together</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Stats
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        <div class="stats-box">
+            <div class="stats-number">100%</div>
+            <div>Free to use</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <div class="stats-box">
+            <div class="stats-number">AI</div>
+            <div>Powered by Groq</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown("""
+        <div class="stats-box">
+            <div class="stats-number">24/7</div>
+            <div>Always available</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("## 🚀 Get Started Free")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔑 Login", use_container_width=True):
+            st.session_state.show_app = True
+            st.rerun()
+    with col2:
+        if st.button("✨ Register Free", use_container_width=True):
+            st.session_state.show_app = True
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("<p style='text-align:center;color:gray'>Built with ❤️ by a pharmacy student | MediRemind 2026</p>", unsafe_allow_html=True)
+
+elif not st.session_state.logged_in and st.session_state.show_app:
+    if st.button("← Back to Home"):
+        st.session_state.show_app = False
+        st.rerun()
     tab1, tab2 = st.tabs(["Login", "Register"])
     with tab1:
         st.subheader("Login")
@@ -121,7 +235,7 @@ if not st.session_state.logged_in:
             if user:
                 st.session_state.logged_in = True
                 st.session_state.user_email = email
-                st.session_state.user_name = user[0]
+                st.session_state.user_name = user['name']
                 st.rerun()
             else:
                 st.error("Wrong email or password!")
@@ -135,48 +249,46 @@ if not st.session_state.logged_in:
                 st.success("Account created! Please login.")
             else:
                 st.error("Email already exists!")
+
 else:
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.markdown("# 💊 MediRemind")
         st.write(f"👋 Hello, **{st.session_state.user_name}**!")
-        st.divider()
-        if st.button("🗑️ Clear My Reminders"):
-            delete_all(st.session_state.user_email)
-            st.success("Reminders cleared!")
-        if st.button("🚪 Logout"):
+        if st.button("Logout"):
             st.session_state.logged_in = False
-            st.session_state.user_email = ""
-            st.session_state.user_name = ""
+            st.session_state.show_app = False
             st.rerun()
+
+    st.markdown("<h2 style='text-align:center;color:#1a73e8'>💊 MediRemind</h2>", unsafe_allow_html=True)
+    st.divider()
 
     t1, t2, t3 = st.tabs(["💊 Medicine Reminder", "⚠️ Drug Interaction", "🩺 Symptom Checker"])
 
     with t1:
+        st.subheader("💊 Medicine Reminder")
         col1, col2 = st.columns(2)
         with col1:
-            medicine_name = st.text_input("💊 Medicine Name", placeholder="e.g. Paracetamol")
+            medicine = st.text_input("💊 Medicine Name")
         with col2:
-            reminder_time = st.time_input("⏰ Reminder Time")
-        dosage = st.text_input("📏 Dosage (optional)", placeholder="e.g. 500mg")
+            time = st.selectbox("⏰ Reminder Time", [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 30)])
+        dosage = st.text_input("✏️ Dosage (optional)")
         if st.button("✅ Save Reminder & Get AI Info", use_container_width=True):
-            if not medicine_name:
-                st.error("Please enter a medicine name!")
-            else:
-                save_reminder(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
-                st.success(f"✅ Reminder saved for {medicine_name} at {reminder_time}!")
-                send_email(st.session_state.user_email, medicine_name, str(reminder_time), dosage if dosage else "Not specified")
-                with st.spinner("🤖 Getting AI info..."):
-                    result = ask_ai(f"About {medicine_name}: 1.What is it? 2.Uses? 3.Side effects? 4.Warnings? 5.Dosage? Simple language for patient.")
-                st.subheader("🤖 About this medicine:")
-                st.info(result)
+            if medicine:
+                save_reminder(st.session_state.user_email, medicine, time, dosage)
+                send_email(st.session_state.user_email, medicine, time, dosage)
+                st.success(f"✅ Reminder saved for {medicine} at {time}!")
+                with st.spinner("Getting AI info..."):
+                    result = ask_ai(f"Tell me about {medicine} medicine. 1.What is it? 2.Uses? 3.Side effects? 4.Warnings? Simple language.")
+                    st.subheader("🤖 About this medicine:")
+                    st.info(result)
         reminders = get_reminders(st.session_state.user_email)
         if reminders:
-            st.divider()
             st.subheader(f"📋 Your Reminders ({len(reminders)} total)")
             for r in reminders:
-                st.markdown(f'<div class="reminder-box">💊 <strong>{r[0]}</strong> — ⏰ {r[1]} — 📏 {r[2]} — 🕐 {r[3]}</div>', unsafe_allow_html=True)
-        else:
-            st.info("No reminders yet!")
+                st.markdown(f"💊 **{r['medicine']}** — ⏰ {r['time']} — ✏️ {r['dosage']}")
+            if st.button("🗑️ Delete All Reminders"):
+                delete_all(st.session_state.user_email)
+                st.rerun()
 
     with t2:
         st.subheader("⚠️ Drug Interaction Checker")
@@ -191,10 +303,10 @@ else:
             else:
                 with st.spinner("Checking..."):
                     result = ask_ai(f"Is it safe to take {med1} and {med2} together? 1.Safe or dangerous? 2.What happens? 3.What to do? Simple language.")
-                if any(w in result.lower() for w in ["dangerous","avoid","do not","risk","harmful","warning"]):
-                    st.error(f"⚠️ {result}")
-                else:
-                    st.success(f"✅ {result}")
+                    if any(w in result.lower() for w in ["dangerous","avoid","do not","risk","harmful","warning"]):
+                        st.error(f"⚠️ {result}")
+                    else:
+                        st.success(f"✅ {result}")
 
     with t3:
         st.subheader("🩺 Symptom Checker")
@@ -210,20 +322,6 @@ else:
                 st.error("Describe your symptoms!")
             else:
                 with st.spinner("Analyzing..."):
-                    result = ask_ai(f"{age}yr {gender} with {severity} symptoms: {symptoms}. 1.Possible condition? 2.OTC medicines? 3.Dosage? 4.When to see doctor? Keep simple.")
-                st.warning("⚠️ AI suggestion only. Always consult a real doctor!")
-                st.info(result)
-
-def check_and_send_reminders():
-    now = datetime.now().strftime("%H:%M")
-    conn = sqlite3.connect("reminders.db")
-    c = conn.cursor()
-    c.execute("SELECT user_email, medicine, time, dosage FROM reminders WHERE time=?", (now,))
-    rows = c.fetchall()
-    conn.close()
-    for row in rows:
-        send_email(row[0], row[1], row[2], row[3])
-
-check_and_send_reminders()
-
-
+                    result = ask_ai(f"{age}yr {gender} with {severity} symptoms: {symptoms}. 1.Possible condition? 2.OTC medicines? 3.Dosage? 4.When to see doctor? Simple language.")
+                    st.warning("⚠️ AI suggestion only. Always consult a real doctor!")
+                    st.info(result)
