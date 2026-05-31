@@ -5,7 +5,6 @@ from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
 import hashlib
 import razorpay
 import uuid
@@ -122,6 +121,55 @@ check_and_send_reminders()
 
 st.set_page_config(page_title="MediRemind", page_icon="💊", layout="centered")
 
+# Browser notification JS
+def get_notification_js(reminders):
+    if not reminders:
+        return ""
+    reminders_js = []
+    for r in reminders:
+        reminders_js.append(f"{{medicine: '{r['medicine']}', time: '{r['time']}', dosage: '{r.get('dosage', '')}'}}")
+    reminders_str = "[" + ",".join(reminders_js) + "]"
+    return f"""
+    <script>
+    const reminders = {reminders_str};
+
+    function checkAndNotify() {{
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const currentTime = hours + ':' + minutes;
+
+        reminders.forEach(function(r) {{
+            if (r.time === currentTime) {{
+                if (Notification.permission === 'granted') {{
+                    new Notification('MediRemind - Time for your medicine!', {{
+                        body: 'Take ' + r.medicine + ' - Dosage: ' + r.dosage,
+                        icon: 'https://cdn.jsdelivr.net/npm/twemoji@14.0.2/assets/72x72/1f48a.png'
+                    }});
+                }}
+            }}
+        }});
+    }}
+
+    function requestPermission() {{
+        if ('Notification' in window) {{
+            Notification.requestPermission().then(function(permission) {{
+                if (permission === 'granted') {{
+                    document.getElementById('notif-status').innerHTML = 'Notifications enabled!';
+                    setInterval(checkAndNotify, 60000);
+                    checkAndNotify();
+                }}
+            }});
+        }}
+    }}
+
+    // Auto check every minute
+    if (Notification.permission === 'granted') {{
+        setInterval(checkAndNotify, 60000);
+    }}
+    </script>
+    """
+
 st.markdown("""
 <style>
 .hero {
@@ -168,13 +216,6 @@ st.markdown("""
     border: 2px solid #e0e7ff;
     margin: 20px 0;
 }
-.pill-card {
-    background: #f8f9ff;
-    border-radius: 15px;
-    padding: 15px;
-    border: 1px solid #e0e7ff;
-    margin-bottom: 10px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -200,13 +241,15 @@ if not st.session_state.logged_in and not st.session_state.show_app:
     """, unsafe_allow_html=True)
 
     st.markdown("## Why MediRemind?")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown("""<div class="feature-box"><div class="feature-icon">⏰</div><div class="feature-title">Smart Reminders</div><p>Get email reminders with your pill image</p></div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">⏰</div><div class="feature-title">Smart Reminders</div><p>Email reminders at the right time</p></div>""", unsafe_allow_html=True)
     with col2:
-        st.markdown("""<div class="feature-box"><div class="feature-icon">🤖</div><div class="feature-title">AI Medicine Info</div><p>Instant AI-powered medicine information</p></div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">🔔</div><div class="feature-title">Phone Alerts</div><p>Browser notifications on your phone</p></div>""", unsafe_allow_html=True)
     with col3:
-        st.markdown("""<div class="feature-box"><div class="feature-icon">📸</div><div class="feature-title">Pill Image Upload</div><p>Upload your pill photo so you never take the wrong medicine</p></div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="feature-box"><div class="feature-icon">📸</div><div class="feature-title">Pill Images</div><p>Upload pill photo — never take wrong medicine</p></div>""", unsafe_allow_html=True)
+    with col4:
+        st.markdown("""<div class="feature-box"><div class="feature-icon">🤖</div><div class="feature-title">AI Assistant</div><p>AI medicine info and symptom check</p></div>""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("## Pricing")
@@ -218,9 +261,10 @@ if not st.session_state.logged_in and not st.session_state.show_app:
             <h1>Rs.0</h1>
             <p>Forever free</p>
             <p>3 reminders</p>
+            <p>Phone notifications</p>
+            <p>Pill image upload</p>
             <p>AI medicine info</p>
             <p>Drug interaction check</p>
-            <p>Pill image upload</p>
         </div>
         """, unsafe_allow_html=True)
     with col2:
@@ -230,10 +274,11 @@ if not st.session_state.logged_in and not st.session_state.show_app:
             <h1>Rs.99/month</h1>
             <p>Best for patients</p>
             <p>Unlimited reminders</p>
+            <p>Phone notifications</p>
+            <p>Pill image upload</p>
             <p>AI medicine info</p>
             <p>Drug interaction check</p>
             <p>Symptom checker</p>
-            <p>Pill image upload</p>
             <p>Priority support</p>
         </div>
         """, unsafe_allow_html=True)
@@ -283,6 +328,14 @@ elif not st.session_state.logged_in and st.session_state.show_app:
                 st.error("Email already exists!")
 
 else:
+    # Get reminders for notifications
+    reminders = get_reminders(st.session_state.user_email)
+
+    # Inject notification JS
+    notif_js = get_notification_js(reminders)
+    if notif_js:
+        st.components.v1.html(notif_js, height=0)
+
     with st.sidebar:
         st.markdown("# MediRemind")
         st.write(f"Hello, **{st.session_state.user_name}**!")
@@ -296,6 +349,17 @@ else:
             st.session_state.logged_in = False
             st.session_state.show_app = False
             st.rerun()
+
+    # Notification enable button
+    st.components.v1.html("""
+    <div style="background:#e8f4fd;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center;">
+        <p style="margin:0;font-size:16px;">Enable phone notifications to get medicine alerts!</p>
+        <button onclick="requestPermission()" style="background:#1a73e8;color:white;padding:10px 25px;border:none;border-radius:8px;font-size:14px;cursor:pointer;margin-top:10px;">
+            Enable Notifications
+        </button>
+        <p id="notif-status" style="margin:5px 0 0 0;font-size:13px;color:green;"></p>
+    </div>
+    """, height=120)
 
     if st.session_state.get("show_payment"):
         st.markdown("## Upgrade to Pro")
@@ -337,7 +401,6 @@ else:
             st.rerun()
 
     plan = st.session_state.user_plan
-    reminders = get_reminders(st.session_state.user_email)
 
     t1, t2, t3 = st.tabs(["Medicine Reminder", "Drug Interaction", "Symptom Checker"])
 
@@ -381,7 +444,7 @@ else:
                     else:
                         st.write("No image")
                 with col2:
-                    st.markdown(f"**{r['medicine']}** — {r['time']} — {r['dosage']}")
+                    st.markdown(f"**{r['medicine']}** — {r['time']} — {r.get('dosage', '')}")
             if st.button("Delete All Reminders"):
                 delete_all(st.session_state.user_email)
                 st.rerun()
